@@ -1,0 +1,4 @@
+aws-lambda-powertools==1.10.1
+holidays==0.10.4
+lambda-decorators==0.6.0
+requests==2.25.1
