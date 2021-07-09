@@ -1,32 +1,120 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  sam-simple-app
-
-  Sample SAM Template for sam-simple-app
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 3
+    Runtime: python3.8
+    Environment:
+      Variables:
+        SERVICE_NAME: HR-slack-bot
+        BOT_TOKEN: xoxb-2249465180118-2256239344626-U06RtoS87ktjCJPHd1Vkvovn
+        BOT_HEALTH_CHANNEL_ID: C0288204SRW
+        USER_VACATION_TABLE_NAME:
+          Ref: UserVacationsTable
+
+#  Api:
+#    Cors:
+#      AllowOrigin: "*"
+#      AllowHeaders: "*"
+#      AllowMethods: "'POST, GET, PUT, PATCH, DELETE'"
 
 Resources:
+# Lambdas
   ConfirmEventSubscription:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       CodeUri: src/handlers/confirm_event_subscription/
       Handler: index.confirm_event_subscription
-      Runtime: python3.8
       Events:
-        HelloWorld:
+        EventSubscriptionRequest:
           Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
           Properties:
             Path: /confirm_event_subscription
             Method: post
-            #TODO Configure CORS.
-            cors: true
+  ProcessInteractivity:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/streams_processors/interactivities
+      Handler: index.process_interactivity
+      Layers:
+        - !Ref MainLayer
+      Events:
+        EventSubscriptionRequest:
+          Type: Api
+          Properties:
+            Path: /process_interactivity
+            Method: post
+      Policies:
+        - Statement:
+            - Sid: DynamodbPolicy
+              Effect: Allow
+              Action:
+                - "dynamodb:GetItem"
+                - "dynamodb:PutItem"
+                - "dynamodb:Query"
+                - "dynamodb:UpdateItem"
+                - "dynamodb:DescribeTable"
+              Resource: !GetAtt UserVacationsTable.Arn
+  ProcessVacationsStream:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/handlers/streams_processors/vacations
+      Handler: index.process_vacations
+      Layers:
+        - !Ref MainLayer
+      Environment:
+        Variables:
+          GENERAL_CHANNEL_ID: C027QC7ECKW
+          CEO_ACCOUNT_ID: U027J688WDQ
+      Events:
+        VacationsEvent:
+          Type: DynamoDB
+          Properties:
+            StartingPosition: LATEST
+            Stream: !GetAtt UserVacationsTable.StreamArn
+      Policies:
+        - Statement:
+            - Sid: DynamodbPolicy
+              Effect: Allow
+              Action:
+                - "dynamodb:DeleteItem"
+              Resource: !GetAtt UserVacationsTable.Arn
 
-Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+# DynamoDB
+  UserVacationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: vacation_status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: vacation_status
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # Layers
+  MainLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: main_layer
+      ContentUri: src/layers/main_layer
+      CompatibleRuntimes:
+        - python3.8
+    Metadata:
+      BuildMethod: python3.8
