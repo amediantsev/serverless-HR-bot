@@ -35,15 +35,15 @@ Resources:
   ProcessInteractivity:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/streams_processors/interactivities
-      Handler: index.process_interactivity
+      CodeUri: src/handlers/process_interactivities
+      Handler: index.process_interactivities
       Layers:
         - !Ref MainLayer
       Events:
         EventSubscriptionRequest:
           Type: Api
           Properties:
-            Path: /process_interactivity
+            Path: /process_interactivities
             Method: post
       Policies:
         - Statement:

@@ -126,20 +126,20 @@ def notify_ceo_about_new_vacation(vacation):
 @logger.inject_lambda_context(log_event=True)
 @uncaught_exceptions_handler
 def process_vacations(event, _):
-    record = event["Records"][0]
-    if record["dynamodb"]["Keys"]["sk"]["S"].startswith("VACATION"):
-        if (event_name := record["eventName"]) == "MODIFY":
-            vacation = record["dynamodb"]["NewImage"]
-            if (new_vacation_status := vacation["vacation_status"]["S"]) == "APPROVED":
-                notify_general_about_approved_vacation(vacation)
-            elif new_vacation_status == "DECLINED":
-                delete_vacation_from_db(decode_key(vacation["pk"]["S"]), decode_key(vacation["sk"]["S"]))
-            notify_requester_about_new_vacation_status(vacation)
+    for record in event["Records"]:
+        if record["dynamodb"]["Keys"]["sk"]["S"].startswith("VACATION"):
+            if (event_name := record["eventName"]) == "MODIFY":
+                vacation = record["dynamodb"]["NewImage"]
+                if (new_vacation_status := vacation["vacation_status"]["S"]) == "APPROVED":
+                    notify_general_about_approved_vacation(vacation)
+                elif new_vacation_status == "DECLINED":
+                    delete_vacation_from_db(decode_key(vacation["pk"]["S"]), decode_key(vacation["sk"]["S"]))
+                notify_requester_about_new_vacation_status(vacation)
 
-        elif event_name == "INSERT":
-            vacation = record["dynamodb"]["NewImage"]
-            notify_ceo_about_new_vacation(vacation)
-            send_markdown_message(
-                "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
-                channel=decode_key(vacation["pk"]["S"])
-            )
+            elif event_name == "INSERT":
+                vacation = record["dynamodb"]["NewImage"]
+                notify_ceo_about_new_vacation(vacation)
+                send_markdown_message(
+                    "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
+                    channel=decode_key(vacation["pk"]["S"])
+                )
