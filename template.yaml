@@ -8,7 +8,7 @@ Globals:
     Environment:
       Variables:
         SERVICE_NAME: HR-slack-bot
-        BOT_TOKEN: xoxb-2249465180118-2256239344626-U06RtoS87ktjCJPHd1Vkvovn
+        BOT_TOKEN: xoxb-2249465180118-2256239344626-jUdQ2nT5CZJzef5dG8jknBwo
         BOT_HEALTH_CHANNEL_ID: C0288204SRW
         USER_VACATION_TABLE_NAME:
           Ref: UserVacationsTable
