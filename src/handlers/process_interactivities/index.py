@@ -127,7 +127,7 @@ def send_user_vacations(requster_user_id, interesting_user_id):
 
 @logger.inject_lambda_context(log_event=True)
 @uncaught_exceptions_handler
-def process_interactivity(event, _):
+def process_interactivities(event, _):
     request_body_json = parse.parse_qs(event["body"])
     payload = json.loads(request_body_json["payload"][0])
     logger.info({"payload": payload})

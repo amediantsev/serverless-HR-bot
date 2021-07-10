@@ -13,6 +13,9 @@ from aws.dynamodb import decode_key, delete_vacation_from_db
 
 logger = Logger(service="HR-slack-bot")
 
+CEO_ACCOUNT_ID = os.getenv("CEO_ACCOUNT_ID")
+GENERAL_CHANNEL_ID = os.getenv("GENERAL_CHANNEL_ID")
+
 VACATION_DATES_FORMATTING = "%Y-%m-%d"
 VACATION_DATES_FORMATTING_TO_DISPLAY = "%d.%m.%Y"
 
@@ -53,7 +56,7 @@ def notify_general_about_approved_vacation(vacation):
            f"*{start_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)} - " \
            f"{end_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)}*\n\n" \
            f"{generate_emoji_set_by_season(start_date)}"
-    send_markdown_message(text, channel=os.getenv("GENERAL_CHANNEL_ID"))
+    send_markdown_message(text, channel=GENERAL_CHANNEL_ID)
 
 
 def notify_requester_about_new_vacation_status(vacation):
@@ -73,7 +76,7 @@ def notify_ceo_about_new_vacation(vacation):
     start_date = datetime.datetime.strptime(vacation["vacation_start_date"]["S"], VACATION_DATES_FORMATTING)
     end_date = datetime.datetime.strptime(vacation["vacation_end_date"]["S"], VACATION_DATES_FORMATTING)
     body = {
-        "channel": os.getenv("CEO_ACCOUNT_ID"),
+        "channel": CEO_ACCOUNT_ID,
         "blocks": [
             {
                 "type": "section",
@@ -126,20 +129,20 @@ def notify_ceo_about_new_vacation(vacation):
 @logger.inject_lambda_context(log_event=True)
 @uncaught_exceptions_handler
 def process_vacations(event, _):
-    record = event["Records"][0]
-    if record["dynamodb"]["Keys"]["sk"]["S"].startswith("VACATION"):
-        if (event_name := record["eventName"]) == "MODIFY":
-            vacation = record["dynamodb"]["NewImage"]
-            if (new_vacation_status := vacation["vacation_status"]["S"]) == "APPROVED":
-                notify_general_about_approved_vacation(vacation)
-            elif new_vacation_status == "DECLINED":
-                delete_vacation_from_db(decode_key(vacation["pk"]["S"]), decode_key(vacation["sk"]["S"]))
-            notify_requester_about_new_vacation_status(vacation)
+    for record in event["Records"]:
+        if record["dynamodb"]["Keys"]["sk"]["S"].startswith("VACATION"):
+            if (event_name := record["eventName"]) == "MODIFY":
+                vacation = record["dynamodb"]["NewImage"]
+                if (new_vacation_status := vacation["vacation_status"]["S"]) == "APPROVED" and GENERAL_CHANNEL_ID:
+                    notify_general_about_approved_vacation(vacation)
+                elif new_vacation_status == "DECLINED":
+                    delete_vacation_from_db(decode_key(vacation["pk"]["S"]), decode_key(vacation["sk"]["S"]))
+                notify_requester_about_new_vacation_status(vacation)
 
-        elif event_name == "INSERT":
-            vacation = record["dynamodb"]["NewImage"]
-            notify_ceo_about_new_vacation(vacation)
-            send_markdown_message(
-                "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
-                channel=decode_key(vacation["pk"]["S"])
-            )
+            elif event_name == "INSERT":
+                vacation = record["dynamodb"]["NewImage"]
+                send_markdown_message(
+                    "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
+                    channel=decode_key(vacation["pk"]["S"])
+                )
+                notify_ceo_about_new_vacation(vacation)
