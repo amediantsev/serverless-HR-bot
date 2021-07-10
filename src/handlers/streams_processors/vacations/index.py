@@ -145,5 +145,4 @@ def process_vacations(event, _):
                     "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
                     channel=decode_key(vacation["pk"]["S"])
                 )
-                if CEO_ACCOUNT_ID:
-                    notify_ceo_about_new_vacation(vacation)
+                notify_ceo_about_new_vacation(vacation)
