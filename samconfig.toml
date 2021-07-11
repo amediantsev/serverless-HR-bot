@@ -3,9 +3,8 @@ version = 0.1
 [default.deploy]
 [default.deploy.parameters]
 stack_name = "HR-bot"
-s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-10l0yzrad1f19"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-dvgd7biuzuz3"
 s3_prefix = "HR-bot"
 region = "eu-central-1"
-confirm_changeset = true
-capabilities = "CAPABILITY_IAM"
 profile = "perfsys"
+capabilities = "CAPABILITY_IAM"
