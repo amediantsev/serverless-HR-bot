@@ -7,9 +7,9 @@ import holidays
 
 from decorators import uncaught_exceptions_handler
 from exceptions import ValidationError
-from slack.messages import send_markdown_message
-from slack.modals import open_modal
-from slack.modals import render_book_vacation_modal, render_see_user_vacations_modal
+from slack.messages import send_message
+from slack.views import open_modal_view
+from slack.views import get_book_vacation_modal_view, get_see_user_vacations_modal_view
 from aws.dynamodb import (
     save_vacation_to_db, get_user_vacations_from_db, get_user_from_db, get_vacation_from_db, update_vacation_status
 )
@@ -21,9 +21,9 @@ UA_HOLIDAYS = holidays.UA()
 VACATION_DATES_FORMATTING = "%Y-%m-%d"
 VACATION_DATES_FORMATTING_TO_DISPLAY = "%d.%m.%Y"
 
-INTERACTIVITIES_RENDER_FUNCTIONS_MAPPING = {
-    "book_vacation": render_book_vacation_modal,
-    "see_user_vacations": render_see_user_vacations_modal,
+INTERACTIVITIES_GET_FUNCTIONS_MAPPING = {
+    "book_vacation": get_book_vacation_modal_view,
+    "see_user_vacations": get_see_user_vacations_modal_view,
 }
 
 
@@ -41,7 +41,7 @@ def process_block_actions(payload):
         return
     new_status = received_action["value"]
     update_vacation_status(user_id, vacation_id, new_status)
-    send_markdown_message(
+    send_message(
         f"Vacation for @{vacation_item['username']} was {new_status.lower()} :ok_hand:",
         webhook_url=payload["response_url"]
     )
@@ -59,7 +59,7 @@ def process_view_submission(payload):
                 block_data["vacation_end_date"]["selected_date"],
             )
         except ValidationError as e:
-            send_markdown_message(
+            send_message(
                 f"Vacation *was not booked*, because it is invalid: {e} :thinking_face:",
                 channel=payload["user"]["id"]
             )
@@ -122,7 +122,7 @@ def send_user_vacations(requster_user_id, interesting_user_id):
         for year, days in working_days_by_year_dict.items():
             text += f"\t*{days}* days in *{year}* year\n"
 
-    send_markdown_message(text, channel=requster_user_id)
+    send_message(text, channel=requster_user_id)
 
 
 @logger.inject_lambda_context(log_event=True)
@@ -133,9 +133,9 @@ def process_interactivities(event, _):
     logger.info({"payload": payload})
 
     if interactivity_name := payload.get("callback_id"):
-        render_modal_body_function = INTERACTIVITIES_RENDER_FUNCTIONS_MAPPING[interactivity_name]
-        open_modal_body = render_modal_body_function(payload["trigger_id"])
-        open_modal(open_modal_body)
+        get_modal_view_body_function = INTERACTIVITIES_GET_FUNCTIONS_MAPPING[interactivity_name]
+        modal_view_body = get_modal_view_body_function()
+        open_modal_view(payload["trigger_id"], modal_view_body)
 
     elif payload_type := payload.get("type"):
         PAYLOAD_PROCESSING_FUNCTIONS_MAPPING.get(payload_type, lambda *args: None)(payload)
