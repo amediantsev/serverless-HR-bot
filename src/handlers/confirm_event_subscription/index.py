@@ -1,4 +1,5 @@
 import os
+from http import HTTPStatus
 
 from aws_lambda_powertools import Logger
 from lambda_decorators import load_json_body, dump_json_body
@@ -12,4 +13,4 @@ logger = Logger(service=SERVICE_NAME)
 @load_json_body
 @dump_json_body
 def confirm_event_subscription(event, _):
-    return {"statusCode": 200, "body": event.get("body", {}).get("challenge")}
+    return {"statusCode": HTTPStatus.OK, "body": event.get("body", {}).get("challenge")}

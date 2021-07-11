@@ -8,14 +8,18 @@ from boto3.dynamodb.types import TypeDeserializer
 
 from decorators import uncaught_exceptions_handler
 from slack.messages import send_message
-from aws.dynamodb import delete_vacation_from_db
+from aws.dynamodb import (
+    delete_vacation_from_db,
+    EntityType,
+    get_notifications_channel_from_db,
+    get_decision_maker_from_db, update_vacation_status
+)
+from slack.users import get_user
+
 
 deserializer = TypeDeserializer()
 SERVICE_NAME = os.getenv("SERVICE_NAME")
 logger = Logger(service=SERVICE_NAME)
-
-CEO_ACCOUNT_ID = os.getenv("CEO_ACCOUNT_ID")
-GENERAL_CHANNEL_ID = os.getenv("GENERAL_CHANNEL_ID")
 
 VACATION_DATES_FORMATTING = "%Y-%m-%d"
 VACATION_DATES_FORMATTING_TO_DISPLAY = "%d.%m.%Y"
@@ -43,21 +47,21 @@ def generate_emoji_set_by_season(vacation_start_date):
     elif vacation_month < 9:
         return SeasonEmojiSet.SUMMER.value
     else:
-        return SeasonEmojiSet.AUTUMN
+        return SeasonEmojiSet.AUTUMN.value
 
 
 def generate_block_id_for_vacation_decision(user_id, vacation_id):
     return json.dumps({"event": "vacation_decision", "user_id": user_id, "vacation_id": vacation_id})
 
 
-def notify_general_about_approved_vacation(vacation):
+def notify_team_about_approved_vacation(vacation, notifications_channel_id):
     start_date = datetime.datetime.strptime(vacation["vacation_start_date"], VACATION_DATES_FORMATTING)
     end_date = datetime.datetime.strptime(vacation["vacation_end_date"], VACATION_DATES_FORMATTING)
-    text = f"@{vacation['username']} booked *vacation* for the following dates:\n\n" \
+    text = f"@{get_user(vacation['user_id'])['name']} booked *vacation* for the following dates:\n\n" \
            f"*{start_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)} - " \
            f"{end_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)}*\n\n" \
            f"{generate_emoji_set_by_season(start_date)}"
-    send_message(text, channel=GENERAL_CHANNEL_ID)
+    send_message(text, channel=notifications_channel_id)
 
 
 def notify_requester_about_new_vacation_status(vacation):
@@ -73,7 +77,7 @@ def notify_requester_about_new_vacation_status(vacation):
     send_message(text, channel=vacation["user_id"])
 
 
-def notify_ceo_about_new_vacation(vacation):
+def send_vacation_for_approvement(vacation, decision_maker_id):
     start_date = datetime.datetime.strptime(vacation["vacation_start_date"], VACATION_DATES_FORMATTING)
     end_date = datetime.datetime.strptime(vacation["vacation_end_date"], VACATION_DATES_FORMATTING)
     blocks = [
@@ -81,7 +85,8 @@ def notify_ceo_about_new_vacation(vacation):
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"@{vacation['username']} want to book a *vacation* for the following dates:\n\n"
+                "text": f"@{get_user(vacation['user_id'])['name']} "
+                        f"want to book a *vacation* for the following dates:\n\n"
             }
         },
         {"type": "divider"},
@@ -121,29 +126,37 @@ def notify_ceo_about_new_vacation(vacation):
             ]
         }
     ]
-    send_message(blocks=blocks, channel=CEO_ACCOUNT_ID)
+    send_message(blocks=blocks, channel=decision_maker_id)
 
 
 @logger.inject_lambda_context(log_event=True)
 @uncaught_exceptions_handler
 def process_vacations(event, _):
     for record in event["Records"]:
-        if record["dynamodb"]["Keys"]["sk"]["S"].startswith("VACATION"):
+        record_sk = record["dynamodb"]["Keys"]["sk"]["S"]
+        if record_sk.startswith(f"{EntityType.VACATION.value}#"):
             vacation = {
                 key: deserializer.deserialize(value)
                 for key, value in record["dynamodb"].get("NewImage", {}).items()
             }
 
             if (event_name := record["eventName"]) == "MODIFY":
-                if (new_vacation_status := vacation["vacation_status"]) == "APPROVED" and GENERAL_CHANNEL_ID:
-                    notify_general_about_approved_vacation(vacation)
+                if (
+                    (new_vacation_status := vacation["vacation_status"]) == "APPROVED"
+                    and (notifications_channel := get_notifications_channel_from_db())
+                ):
+                    notify_team_about_approved_vacation(vacation, notifications_channel["channel_id"])
                 elif new_vacation_status == "DECLINED":
                     delete_vacation_from_db(vacation["user_id"], vacation["vacation_id"])
                 notify_requester_about_new_vacation_status(vacation)
 
             elif event_name == "INSERT":
-                send_message(
-                    "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
-                    channel=vacation["user_id"]
-                )
-                notify_ceo_about_new_vacation(vacation)
+                user_id = vacation["user_id"]
+                if decision_maker := get_decision_maker_from_db():
+                    send_message(
+                        "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
+                        channel=user_id
+                    )
+                    send_vacation_for_approvement(vacation, decision_maker["user_id"])
+                else:
+                    update_vacation_status(user_id, vacation["vacation_id"], "APPROVED")

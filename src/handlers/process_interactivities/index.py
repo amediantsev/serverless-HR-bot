@@ -1,5 +1,6 @@
-import datetime
+from datetime import datetime, timedelta
 import json
+from http import HTTPStatus
 from urllib import parse
 
 from aws_lambda_powertools import Logger
@@ -7,11 +8,21 @@ import holidays
 
 from decorators import uncaught_exceptions_handler
 from exceptions import ValidationError
+from slack.users import get_user
 from slack.messages import send_message
-from slack.views import open_modal_view
-from slack.views import get_book_vacation_modal_view, get_see_user_vacations_modal_view
+from slack.views import (
+    open_modal_view,
+    get_book_vacation_modal_view,
+    get_see_user_vacations_modal_view,
+    get_configure_workspace_modal_view,
+)
 from aws.dynamodb import (
-    save_vacation_to_db, get_user_vacations_from_db, get_user_from_db, get_vacation_from_db, update_vacation_status
+    save_vacation_to_db,
+    get_user_vacations_from_db,
+    get_vacation_from_db,
+    update_vacation_status,
+    save_decision_maker_to_db,
+    save_notifications_channel_to_db,
 )
 
 
@@ -24,6 +35,7 @@ VACATION_DATES_FORMATTING_TO_DISPLAY = "%d.%m.%Y"
 INTERACTIVITIES_GET_FUNCTIONS_MAPPING = {
     "book_vacation": get_book_vacation_modal_view,
     "see_user_vacations": get_see_user_vacations_modal_view,
+    "configure_workspace": get_configure_workspace_modal_view,
 }
 
 
@@ -42,43 +54,72 @@ def process_block_actions(payload):
     new_status = received_action["value"]
     update_vacation_status(user_id, vacation_id, new_status)
     send_message(
-        f"Vacation for @{vacation_item['username']} was {new_status.lower()} :ok_hand:",
-        webhook_url=payload["response_url"]
+        f"Vacation for @{get_user(user_id)['name']} was {new_status.lower()} :ok_hand:",
+        webhook_url=payload["response_url"],
     )
+
+
+def process_book_vacation_submission(view, user_submitted_id):
+    block_data = view["state"]["values"]["vacation_dates"]
+    try:
+        save_vacation_to_db(
+            user_submitted_id,
+            block_data["vacation_start_date"]["selected_date"],
+            block_data["vacation_end_date"]["selected_date"],
+        )
+    except ValidationError as e:
+        send_message(
+            f"Vacation *was not booked*, because it is invalid: {e} :thinking_face:", channel=user_submitted_id
+        )
+
+
+def process_configure_workspace_submission(view, user_submitted_id):
+    submission_data = view["state"]["values"]
+    save_decision_maker_to_db(
+        submission_data["vacations_decision_maker_selector"]["vacations_decision_maker_selector"]["selected_user"]
+    )
+    try:
+        save_notifications_channel_to_db(
+            submission_data["approved_vacations_notifications_selector"][
+                "approved_vacations_notifications_selector"][
+                "selected_channel"]
+        )
+    except ValidationError as e:
+        send_message(
+            f"Notifications channel *was not updated*, because it is invalid: {e} :thinking_face:",
+            channel=user_submitted_id
+        )
+
+
+def process_see_user_vacations_submission(view, user_submitted_id):
+    send_user_vacations(user_submitted_id, view["state"]["values"]["user_selector"]["user_selector"]["selected_user"])
+
+
+VIEW_SUBMISSIONS_PROCESSORS_MAPPING = {
+    "book_vacation": process_book_vacation_submission,
+    "configure_workspace": process_configure_workspace_submission,
+    "see_user_vacations": process_see_user_vacations_submission
+}
 
 
 def process_view_submission(payload):
     view = payload.get("view")
-    if (callback_id := view["callback_id"]) == "book_vacation":
-        block_data = view["state"]["values"]["vacation_dates"]
-        try:
-            save_vacation_to_db(
-                payload["user"]["id"],
-                payload["user"]["username"],
-                block_data["vacation_start_date"]["selected_date"],
-                block_data["vacation_end_date"]["selected_date"],
-            )
-        except ValidationError as e:
-            send_message(
-                f"Vacation *was not booked*, because it is invalid: {e} :thinking_face:",
-                channel=payload["user"]["id"]
-            )
-
-    elif callback_id == "see_user_vacations":
-        block_data = view["state"]["values"]["user_selector"]
-        send_user_vacations(payload["user"]["id"], block_data["user_selector"]["selected_user"])
+    VIEW_SUBMISSIONS_PROCESSORS_MAPPING[view["callback_id"]](view, payload["user"]["id"])
 
 
 PAYLOAD_PROCESSING_FUNCTIONS_MAPPING = {
     "block_actions": process_block_actions,
-    "view_submission": process_view_submission
+    "view_submission": process_view_submission,
 }
 
 
 def compute_working_days_in_vacation(
-        start_date: datetime.datetime, end_date: datetime.datetime, working_days_by_year_dict
+    start_date: datetime, end_date: datetime, working_days_by_year_dict
 ) -> int:
-    vacation_dates_range = [start_date + datetime.timedelta(days=x) for x in range(0, (end_date - start_date).days)]
+    vacation_dates_range = [
+        start_date + timedelta(days=x)
+        for x in range(0, (end_date - start_date + timedelta(days=1)).days)
+    ]
     working_days_count = 0
     for date in vacation_dates_range:
         if not (date.weekday() > 4 or date.strftime(VACATION_DATES_FORMATTING) in UA_HOLIDAYS):
@@ -92,15 +133,15 @@ def compute_working_days_in_vacation(
     return working_days_count
 
 
-def send_user_vacations(requster_user_id, interesting_user_id):
-    user = get_user_from_db(interesting_user_id)
-    username = user["username"] if user else "Selected user"
+def send_user_vacations(requester_user_id, interesting_user_id):
+    user = get_user(interesting_user_id)
+    username = user["name"]
     user_vacations = get_user_vacations_from_db(interesting_user_id)
     if not user_vacations:
         text = f"{username} doesn't have booked vacations :thinking_face:"
     else:
         user_vacations.sort(
-            key=lambda vacation: datetime.datetime.strptime(vacation["vacation_start_date"], VACATION_DATES_FORMATTING)
+            key=lambda vacation: datetime.strptime(vacation["vacation_start_date"], VACATION_DATES_FORMATTING)
         )
         text = f"*@{username}* booked vacations:\n\n"
 
@@ -108,21 +149,23 @@ def send_user_vacations(requster_user_id, interesting_user_id):
         working_days_by_year_dict = {}
 
         for index, vacation in enumerate(user_vacations, 1):
-            start_date = datetime.datetime.strptime(vacation["vacation_start_date"], VACATION_DATES_FORMATTING)
-            end_date = datetime.datetime.strptime(vacation["vacation_end_date"], VACATION_DATES_FORMATTING)
+            start_date = datetime.strptime(vacation["vacation_start_date"], VACATION_DATES_FORMATTING)
+            end_date = datetime.strptime(vacation["vacation_end_date"], VACATION_DATES_FORMATTING)
             vacation_working_days = compute_working_days_in_vacation(start_date, end_date, working_days_by_year_dict)
             total_working_days += vacation_working_days
 
-            text += f"*{index}. " \
-                    f"{start_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)} - " \
-                    f"{end_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)}*\t\t" \
-                    f"({vacation_working_days} working days)\n\n"
+            text += (
+                f"*{index}. "
+                f"{start_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)} - "
+                f"{end_date.strftime(VACATION_DATES_FORMATTING_TO_DISPLAY)}*\t\t"
+                f"({vacation_working_days} working days)\n\n"
+            )
 
         text += f"Total working days: *{total_working_days}*\n"
         for year, days in working_days_by_year_dict.items():
             text += f"\t*{days}* days in *{year}* year\n"
 
-    send_message(text, channel=requster_user_id)
+    send_message(text, channel=requester_user_id)
 
 
 @logger.inject_lambda_context(log_event=True)
@@ -140,4 +183,4 @@ def process_interactivities(event, _):
     elif payload_type := payload.get("type"):
         PAYLOAD_PROCESSING_FUNCTIONS_MAPPING.get(payload_type, lambda *args: None)(payload)
 
-    return {"statusCode": 200}
+    return {"statusCode": HTTPStatus.OK}

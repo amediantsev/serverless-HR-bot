@@ -6,7 +6,9 @@ from slack_sdk import WebClient
 from slack_sdk.models.views import View
 from slack_sdk.errors import SlackApiError
 
+from aws.dynamodb import get_notifications_channel_from_db, get_decision_maker_from_db
 from slack.messages import generate_block_with_text
+
 
 SERVICE_NAME = os.getenv("SERVICE_NAME")
 logger = Logger(service=SERVICE_NAME)
@@ -64,5 +66,57 @@ def get_see_user_vacations_modal_view():
                     "placeholder": {"type": "plain_text", "text": "Select a user"},
                 },
             }
+        ]
+    )
+
+
+def get_configure_workspace_modal_view():
+    decision_maker_selector_block = {
+        "type": "section",
+        "block_id": "vacations_decision_maker_selector",
+        "text": {
+            "type": "mrkdwn",
+            "text": "Pick a user which will make decisions for vacations:"
+        },
+        "accessory": {
+            "action_id": "vacations_decision_maker_selector",
+            "type": "users_select",
+            "placeholder": {
+                "type": "plain_text",
+                "text": "Select a user"
+            }
+        }
+    }
+    if decision_maker := get_decision_maker_from_db():
+        decision_maker_selector_block["accessory"]["initial_user"] = decision_maker["user_id"]
+
+    notifications_channel_selector_block = {
+        "type": "section",
+        "block_id": "approved_vacations_notifications_selector",
+        "text": {
+            "type": "mrkdwn",
+            "text": "Pick a channel for notifications about approved vacations:"
+        },
+        "accessory": {
+            "action_id": "approved_vacations_notifications_selector",
+            "type": "channels_select",
+            "placeholder": {
+                "type": "plain_text",
+                "text": "Select a channel"
+            }
+        }
+    }
+    if notifications_channel := get_notifications_channel_from_db():
+        notifications_channel_selector_block["accessory"]["initial_channel"] = notifications_channel["channel_id"]
+
+    return View(
+        type="modal",
+        callback_id="configure_workspace",
+        title={"type": "plain_text", "text": "Configure workspace", "emoji": True},
+        submit={"type": "plain_text", "text": "Submit", "emoji": True},
+        close={"type": "plain_text", "text": "Cancel", "emoji": True},
+        blocks=[
+            decision_maker_selector_block,
+            notifications_channel_selector_block
         ]
     )

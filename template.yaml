@@ -13,14 +13,21 @@ Globals:
         USER_VACATION_TABLE_NAME:
           Ref: UserVacationsTable
 
-#  Api:
-#    Cors:
-#      AllowOrigin: "*"
-#      AllowHeaders: "*"
-#      AllowMethods: "'POST, GET, PUT, PATCH, DELETE'"
-
 Resources:
 # Lambdas
+
+  # Layers
+  MainLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: main_layer
+      ContentUri: src/layers/main_layer
+      CompatibleRuntimes:
+        - python3.8
+    Metadata:
+      BuildMethod: python3.8
+
+  # Functions
   ConfirmEventSubscription:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
@@ -63,10 +70,6 @@ Resources:
       Handler: index.process_vacations
       Layers:
         - !Ref MainLayer
-      Environment:
-        Variables:
-          GENERAL_CHANNEL_ID: C027QC7ECKW
-          CEO_ACCOUNT_ID: U027J688WDQ
       Events:
         VacationsEvent:
           Type: DynamoDB
@@ -78,7 +81,9 @@ Resources:
             - Sid: DynamodbPolicy
               Effect: Allow
               Action:
+                - "dynamodb:GetItem"
                 - "dynamodb:DeleteItem"
+                - "dynamodb:UpdateItem"
               Resource: !GetAtt UserVacationsTable.Arn
 
 # DynamoDB
@@ -107,14 +112,3 @@ Resources:
             ProjectionType: ALL
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
-
-  # Layers
-  MainLayer:
-    Type: AWS::Serverless::LayerVersion
-    Properties:
-      LayerName: main_layer
-      ContentUri: src/layers/main_layer
-      CompatibleRuntimes:
-        - python3.8
-    Metadata:
-      BuildMethod: python3.8
