@@ -22,10 +22,6 @@ def generate_key(type, name):
     return f"{type}#{name}"
 
 
-def decode_key(key):
-    return key.split("#")[-1]
-
-
 def format_vacation_string_to_date(string_date):
     return datetime.strptime(string_date, "%Y-%m-%d")
 
@@ -51,12 +47,15 @@ def save_vacation_to_db(user_id, username, vacation_start_date, vacation_end_dat
     existing_user_vacations = get_user_vacations_from_db(user_id)
     validate_new_vacation(vacation_start_date, vacation_end_date, existing_user_vacations)
 
+    vacation_id = str(uuid4())
     pk = generate_key(EntityType.USER.value, user_id)
-    sk = generate_key(EntityType.VACATION.value, str(uuid4()))
+    sk = generate_key(EntityType.VACATION.value, vacation_id)
     response = USER_VACATION_TABLE.put_item(
         Item={
             "pk": pk,
             "sk": sk,
+            "user_id": user_id,
+            "vacation_id": vacation_id,
             "vacation_start_date": vacation_start_date,
             "vacation_end_date": vacation_end_date,
             "username": username,
@@ -74,7 +73,7 @@ def get_user_from_db(user_id):
 
 def save_user_to_db(user_id, username):
     pk = sk = generate_key(EntityType.USER.value, user_id)
-    response = USER_VACATION_TABLE.put_item(Item={"pk": pk, "sk": sk, "username": username})
+    response = USER_VACATION_TABLE.put_item(Item={"pk": pk, "sk": sk, "user_id": user_id, "username": username})
     return response
 
 
