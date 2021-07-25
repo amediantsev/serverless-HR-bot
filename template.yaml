@@ -28,17 +28,6 @@ Resources:
       BuildMethod: python3.8
 
   # Functions
-  ConfirmEventSubscription:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
-    Properties:
-      CodeUri: src/handlers/confirm_event_subscription/
-      Handler: index.confirm_event_subscription
-      Events:
-        EventSubscriptionRequest:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-          Properties:
-            Path: /confirm_event_subscription
-            Method: post
   ProcessInteractivity:
     Type: AWS::Serverless::Function
     Properties:
