@@ -3,13 +3,15 @@ from http import HTTPStatus
 
 from aws_lambda_powertools import Logger
 
-from aws.dynamodb import save_workspace
+from aws.dynamodb import VacationsTable
 from decorators import uncaught_exceptions_handler
 from slack.auth import exchange_oauth_token
 
 
 SERVICE_NAME = os.getenv("SERVICE_NAME")
 logger = Logger(service=SERVICE_NAME)
+
+VACATIONS_DB_TABLE = VacationsTable()
 
 
 @logger.inject_lambda_context(log_event=True)
@@ -29,7 +31,7 @@ def register_new_workspace(event, _):
             "body": "<html><body><h1>Sorry, something went wrong. Try again later, please.</h1></body></html>"
         }
 
-    save_workspace(oauth_response["team"]["id"], oauth_response["access_token"])
+    VACATIONS_DB_TABLE.save_workspace(oauth_response["team"]["id"], oauth_response["access_token"])
 
     return {
         "statusCode": HTTPStatus.CREATED,

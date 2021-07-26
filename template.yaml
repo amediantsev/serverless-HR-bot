@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
     Runtime: python3.8
@@ -9,7 +8,6 @@ Globals:
     Environment:
       Variables:
         SERVICE_NAME: HR-slack-bot
-        BOT_TOKEN: xoxb-2249465180118-2256239344626-jUdQ2nT5CZJzef5dG8jknBwo
         BOT_HEALTH_CHANNEL_ID: C0288204SRW
         USER_VACATIONS_TABLE_NAME:
           Ref: UserVacationsTable
@@ -32,15 +30,15 @@ Resources:
   ProcessInteractivity:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/process_interactivities
-      Handler: index.process_interactivities
+      CodeUri: src/handlers/process_interactivity
+      Handler: index.process_interactivity
       Layers:
         - !Ref MainLayer
       Events:
         InteractivityAction:
           Type: Api
           Properties:
-            Path: /process_interactivities
+            Path: /process_interactivity
             Method: post
       Policies:
         - Statement:

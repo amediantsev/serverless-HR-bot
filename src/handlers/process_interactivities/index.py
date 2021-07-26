@@ -17,14 +17,9 @@ from slack.views import (
     get_see_user_vacations_modal_view,
     get_configure_workspace_modal_view,
 )
-from aws.dynamodb import (
-    save_vacation_to_db,
-    get_user_vacations_from_db,
-    get_vacation_from_db,
-    update_vacation_status,
-    save_decision_maker_to_db,
-    save_notifications_channel_to_db,
-)
+from aws.dynamodb import VacationsTable
+
+VACATIONS_DB_TABLE = VacationsTable()
 
 
 SERVICE_NAME = os.getenv("SERVICE_NAME")
@@ -34,7 +29,7 @@ UA_HOLIDAYS = holidays.UA()
 VACATION_DATES_FORMATTING = "%Y-%m-%d"
 VACATION_DATES_FORMATTING_TO_DISPLAY = "%d.%m.%Y"
 
-INTERACTIVITIES_GET_FUNCTIONS_MAPPING = {
+INTERACTIVITY_GET_FUNCTIONS_MAPPING = {
     "book_vacation": get_book_vacation_modal_view,
     "see_user_vacations": get_see_user_vacations_modal_view,
     "configure_workspace": get_configure_workspace_modal_view,
@@ -50,11 +45,11 @@ def process_block_actions(payload):
         return
     user_id = block_id_dict["user_id"]
     vacation_id = block_id_dict["vacation_id"]
-    vacation_item = get_vacation_from_db(user_id, vacation_id)
+    vacation_item = VACATIONS_DB_TABLE.get_vacation_from_db(user_id, vacation_id)
     if vacation_item["vacation_status"] != "PENDING":
         return
     new_status = received_action["value"]
-    update_vacation_status(user_id, vacation_id, new_status)
+    VACATIONS_DB_TABLE.update_vacation_status(user_id, vacation_id, new_status)
     send_message(
         f"Vacation for @{get_user(user_id)['name']} was {new_status.lower()} :ok_hand:",
         webhook_url=payload["response_url"],
@@ -64,7 +59,7 @@ def process_block_actions(payload):
 def process_book_vacation_submission(view, user_submitted_id):
     block_data = view["state"]["values"]["vacation_dates"]
     try:
-        save_vacation_to_db(
+        VACATIONS_DB_TABLE.save_vacation_to_db(
             user_submitted_id,
             block_data["vacation_start_date"]["selected_date"],
             block_data["vacation_end_date"]["selected_date"],
@@ -77,11 +72,11 @@ def process_book_vacation_submission(view, user_submitted_id):
 
 def process_configure_workspace_submission(view, user_submitted_id):
     submission_data = view["state"]["values"]
-    save_decision_maker_to_db(
+    VACATIONS_DB_TABLE.save_decision_maker_to_db(
         submission_data["vacations_decision_maker_selector"]["vacations_decision_maker_selector"]["selected_user"]
     )
     try:
-        save_notifications_channel_to_db(
+        VACATIONS_DB_TABLE.save_notifications_channel_to_db(
             submission_data["approved_vacations_notifications_selector"][
                 "approved_vacations_notifications_selector"][
                 "selected_channel"]
@@ -138,7 +133,7 @@ def compute_working_days_in_vacation(
 def send_user_vacations(requester_user_id, interesting_user_id):
     user = get_user(interesting_user_id)
     username = user["name"]
-    user_vacations = get_user_vacations_from_db(interesting_user_id)
+    user_vacations = VACATIONS_DB_TABLE.get_user_vacations_from_db(interesting_user_id)
     if not user_vacations:
         text = f"{username} doesn't have booked vacations :thinking_face:"
     else:
@@ -172,17 +167,19 @@ def send_user_vacations(requester_user_id, interesting_user_id):
 
 @logger.inject_lambda_context(log_event=True)
 @uncaught_exceptions_handler
-def process_interactivities(event, _):
+def process_interactivity(event, _):
     request_body_json = parse.parse_qs(event["body"])
     payload = json.loads(request_body_json["payload"][0])
     logger.info({"payload": payload})
+    VACATIONS_DB_TABLE.workspace_id = payload["team"]["id"]
 
     if interactivity_name := payload.get("callback_id"):
-        get_modal_view_body_function = INTERACTIVITIES_GET_FUNCTIONS_MAPPING[interactivity_name]
+        get_modal_view_body_function = INTERACTIVITY_GET_FUNCTIONS_MAPPING[interactivity_name]
         modal_view_body = get_modal_view_body_function()
         open_modal_view(payload["trigger_id"], modal_view_body)
 
     elif payload_type := payload.get("type"):
-        PAYLOAD_PROCESSING_FUNCTIONS_MAPPING.get(payload_type, lambda *args: None)(payload)
+        payload_processor = PAYLOAD_PROCESSING_FUNCTIONS_MAPPING.get(payload_type, lambda *args: None)
+        payload_processor(payload)
 
     return {"statusCode": HTTPStatus.OK}

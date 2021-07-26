@@ -8,14 +8,11 @@ from boto3.dynamodb.types import TypeDeserializer
 
 from decorators import uncaught_exceptions_handler
 from slack.messages import send_message
-from aws.dynamodb import (
-    delete_vacation_from_db,
-    EntityType,
-    get_notifications_channel_from_db,
-    get_decision_maker_from_db, update_vacation_status
-)
+from aws.dynamodb import VacationsTable, EntityType
 from slack.users import get_user
 
+
+VACATIONS_DB_TABLE = VacationsTable()
 
 deserializer = TypeDeserializer()
 SERVICE_NAME = os.getenv("SERVICE_NAME")
@@ -140,23 +137,25 @@ def process_vacations(event, _):
                 for key, value in record["dynamodb"].get("NewImage", {}).items()
             }
 
+            VACATIONS_DB_TABLE.workspace_id = vacation["workspace_id"]
+
             if (event_name := record["eventName"]) == "MODIFY":
                 if (
                     (new_vacation_status := vacation["vacation_status"]) == "APPROVED"
-                    and (notifications_channel := get_notifications_channel_from_db())
+                    and (notifications_channel := VACATIONS_DB_TABLE.get_notifications_channel_from_db())
                 ):
                     notify_team_about_approved_vacation(vacation, notifications_channel["channel_id"])
                 elif new_vacation_status == "DECLINED":
-                    delete_vacation_from_db(vacation["user_id"], vacation["vacation_id"])
+                    VACATIONS_DB_TABLE.delete_vacation_from_db(vacation["user_id"], vacation["vacation_id"])
                 notify_requester_about_new_vacation_status(vacation)
 
             elif event_name == "INSERT":
                 user_id = vacation["user_id"]
-                if decision_maker := get_decision_maker_from_db():
+                if decision_maker := VACATIONS_DB_TABLE.get_decision_maker_from_db():
                     send_message(
                         "Vacation has been sent for approval :stuck_out_tongue_winking_eye::+1:",
                         channel=user_id
                     )
                     send_vacation_for_approvement(vacation, decision_maker["user_id"])
                 else:
-                    update_vacation_status(user_id, vacation["vacation_id"], "APPROVED")
+                    VACATIONS_DB_TABLE.update_vacation_status(user_id, vacation["vacation_id"], "APPROVED")
