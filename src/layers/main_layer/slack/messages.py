@@ -34,10 +34,8 @@ def send_message(text=None, blocks=None, channel=None, webhook_url=None):
         if channel:
             logger.info(f"Sending message to the channel {channel}")
             slack_response = slack_client.chat_postMessage(channel=channel, blocks=blocks)
-            logger.info(slack_response.data)
         else:
             slack_response = requests.post(webhook_url, json={"blocks": blocks})
-            logger.info(slack_response.json())
     except SlackApiError:
         logger.exception("Failed to send message.")
         raise

@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 import json
 from http import HTTPStatus
@@ -26,7 +27,8 @@ from aws.dynamodb import (
 )
 
 
-logger = Logger(service="HR-slack-bot")
+SERVICE_NAME = os.getenv("SERVICE_NAME")
+logger = Logger(service=SERVICE_NAME)
 
 UA_HOLIDAYS = holidays.UA()
 VACATION_DATES_FORMATTING = "%Y-%m-%d"
