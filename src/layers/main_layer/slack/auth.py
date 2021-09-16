@@ -9,7 +9,7 @@ from aws.ssm import get_parameter
 SERVICE_NAME = os.getenv("SERVICE_NAME")
 logger = Logger(service=SERVICE_NAME)
 
-slack_client = WebClient(token=os.environ["BOT_TOKEN"])
+slack_client = WebClient()
 
 CLIENT_ID = get_parameter(os.getenv("CLIENT_ID_SSM_PARAM"), decrypted=True)
 CLIENT_SECRET = get_parameter(os.getenv("CLIENT_SECRET_SSM_PARAM"), decrypted=True)

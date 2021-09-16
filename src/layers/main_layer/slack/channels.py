@@ -1,10 +1,13 @@
-import os
-
 from slack_sdk import WebClient
 
+from aws.dynamodb import VacationsTable
 
-slack_client = WebClient(token=os.environ["BOT_TOKEN"])
+
+VACATIONS_DB_TABLE = VacationsTable()
+
+slack_client = WebClient()
 
 
-def get_channel_members(channel_id):
+def get_channel_members(workspace_id, channel_id):
+    slack_client.token = VACATIONS_DB_TABLE.get_workspace(workspace_id)["access_token"]
     return slack_client.conversations_members(channel=channel_id).data["members"]
