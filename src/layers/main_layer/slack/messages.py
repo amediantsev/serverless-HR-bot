@@ -5,19 +5,23 @@ import requests
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+from aws.dynamodb import VacationsTable
 from exceptions import ArgumentsError
+
+
+VACATIONS_DB_TABLE = VacationsTable()
 
 SERVICE_NAME = os.getenv("SERVICE_NAME")
 logger = Logger(service=SERVICE_NAME)
 
-slack_client = WebClient(token=os.environ["BOT_TOKEN"])
+slack_client = WebClient()
 
 
 def generate_block_with_text(text):
     return {"type": "section", "text": {"type": "mrkdwn", "text": text}}
 
 
-def send_message(text=None, blocks=None, channel=None, webhook_url=None):
+def send_message(workspace_id, text=None, blocks=None, channel=None, webhook_url=None):
     if not (text or blocks):
         raise ArgumentsError("text or blocks must be passed.")
     elif channel and webhook_url:
@@ -33,11 +37,10 @@ def send_message(text=None, blocks=None, channel=None, webhook_url=None):
     try:
         if channel:
             logger.info(f"Sending message to the channel {channel}")
+            slack_client.token = VACATIONS_DB_TABLE.get_workspace(workspace_id)["access_token"]
             slack_response = slack_client.chat_postMessage(channel=channel, blocks=blocks)
-            logger.info(slack_response.data)
         else:
             slack_response = requests.post(webhook_url, json={"blocks": blocks})
-            logger.info(slack_response.json())
     except SlackApiError:
         logger.exception("Failed to send message.")
         raise

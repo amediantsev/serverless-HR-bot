@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 import json
 from http import HTTPStatus
@@ -8,7 +9,8 @@ import holidays
 
 from decorators import uncaught_exceptions_handler
 from exceptions import ValidationError
-from slack.users import get_user
+from slack.channels import get_channel_members
+from slack.users import get_user, get_bot_user_id
 from slack.messages import send_message
 from slack.views import (
     open_modal_view,
@@ -16,23 +18,18 @@ from slack.views import (
     get_see_user_vacations_modal_view,
     get_configure_workspace_modal_view,
 )
-from aws.dynamodb import (
-    save_vacation_to_db,
-    get_user_vacations_from_db,
-    get_vacation_from_db,
-    update_vacation_status,
-    save_decision_maker_to_db,
-    save_notifications_channel_to_db,
-)
+from aws.dynamodb import VacationsTable
 
+VACATIONS_DB_TABLE = VacationsTable()
 
-logger = Logger(service="HR-slack-bot")
+SERVICE_NAME = os.getenv("SERVICE_NAME")
+logger = Logger(service=SERVICE_NAME)
 
 UA_HOLIDAYS = holidays.UA()
 VACATION_DATES_FORMATTING = "%Y-%m-%d"
 VACATION_DATES_FORMATTING_TO_DISPLAY = "%d.%m.%Y"
 
-INTERACTIVITIES_GET_FUNCTIONS_MAPPING = {
+INTERACTIVITY_GET_FUNCTIONS_MAPPING = {
     "book_vacation": get_book_vacation_modal_view,
     "see_user_vacations": get_see_user_vacations_modal_view,
     "configure_workspace": get_configure_workspace_modal_view,
@@ -48,51 +45,67 @@ def process_block_actions(payload):
         return
     user_id = block_id_dict["user_id"]
     vacation_id = block_id_dict["vacation_id"]
-    vacation_item = get_vacation_from_db(user_id, vacation_id)
+    vacation_item = VACATIONS_DB_TABLE.get_vacation(user_id, vacation_id)
     if vacation_item["vacation_status"] != "PENDING":
         return
     new_status = received_action["value"]
-    update_vacation_status(user_id, vacation_id, new_status)
+    VACATIONS_DB_TABLE.update_vacation_status(user_id, vacation_id, new_status)
+    workspace_id = payload["team"]["id"]
     send_message(
-        f"Vacation for @{get_user(user_id)['name']} was {new_status.lower()} :ok_hand:",
+        workspace_id,
+        f"Vacation for @{get_user(workspace_id, user_id)['name']} was {new_status.lower()} :ok_hand:",
         webhook_url=payload["response_url"],
     )
 
 
-def process_book_vacation_submission(view, user_submitted_id):
+def process_book_vacation_submission(workspace_id, view, user_submitted_id):
     block_data = view["state"]["values"]["vacation_dates"]
     try:
-        save_vacation_to_db(
+        VACATIONS_DB_TABLE.save_vacation(
             user_submitted_id,
             block_data["vacation_start_date"]["selected_date"],
             block_data["vacation_end_date"]["selected_date"],
         )
     except ValidationError as e:
         send_message(
+            workspace_id,
             f"Vacation *was not booked*, because it is invalid: {e} :thinking_face:", channel=user_submitted_id
         )
 
 
-def process_configure_workspace_submission(view, user_submitted_id):
+def process_configure_workspace_submission(workspace_id, view, user_submitted_id):
     submission_data = view["state"]["values"]
-    save_decision_maker_to_db(
-        submission_data["vacations_decision_maker_selector"]["vacations_decision_maker_selector"]["selected_user"]
+    decision_maker_user_id = submission_data[
+        "vacations_decision_maker_selector"][
+        "vacations_decision_maker_selector"][
+        "selected_user"
+    ]
+    if decision_maker_user_id:
+        VACATIONS_DB_TABLE.save_decision_maker(decision_maker_user_id)
+    notifications_channel_id = submission_data[
+        "approved_vacations_notifications_selector"][
+        "approved_vacations_notifications_selector"][
+        "selected_channel"
+    ]
+    if notifications_channel_id:
+        if get_bot_user_id(workspace_id) not in get_channel_members(workspace_id, notifications_channel_id):
+            send_message(
+                workspace_id,
+                (
+                    f"Notifications channel *was not updated*, because it is invalid: "
+                    f"HR Bot is not in the selected channel for notifications. "
+                    f"Please, add him to the channel and try again. :thinking_face:"
+                ),
+                channel=user_submitted_id
+            )
+        else:
+            VACATIONS_DB_TABLE.save_notifications_channel(notifications_channel_id)
+
+
+def process_see_user_vacations_submission(workspace_id, view, user_submitted_id):
+    send_user_vacations(
+        workspace_id, user_submitted_id, view["state"]["values"]["user_selector"]["user_selector"]["selected_user"]
     )
-    try:
-        save_notifications_channel_to_db(
-            submission_data["approved_vacations_notifications_selector"][
-                "approved_vacations_notifications_selector"][
-                "selected_channel"]
-        )
-    except ValidationError as e:
-        send_message(
-            f"Notifications channel *was not updated*, because it is invalid: {e} :thinking_face:",
-            channel=user_submitted_id
-        )
-
-
-def process_see_user_vacations_submission(view, user_submitted_id):
-    send_user_vacations(user_submitted_id, view["state"]["values"]["user_selector"]["user_selector"]["selected_user"])
 
 
 VIEW_SUBMISSIONS_PROCESSORS_MAPPING = {
@@ -104,7 +117,8 @@ VIEW_SUBMISSIONS_PROCESSORS_MAPPING = {
 
 def process_view_submission(payload):
     view = payload.get("view")
-    VIEW_SUBMISSIONS_PROCESSORS_MAPPING[view["callback_id"]](view, payload["user"]["id"])
+    view_submission_processor = VIEW_SUBMISSIONS_PROCESSORS_MAPPING[view["callback_id"]]
+    view_submission_processor(payload["team"]["id"], view, payload["user"]["id"])
 
 
 PAYLOAD_PROCESSING_FUNCTIONS_MAPPING = {
@@ -114,7 +128,7 @@ PAYLOAD_PROCESSING_FUNCTIONS_MAPPING = {
 
 
 def compute_working_days_in_vacation(
-    start_date: datetime, end_date: datetime, working_days_by_year_dict
+        start_date: datetime, end_date: datetime, working_days_by_year_dict
 ) -> int:
     vacation_dates_range = [
         start_date + timedelta(days=x)
@@ -133,10 +147,10 @@ def compute_working_days_in_vacation(
     return working_days_count
 
 
-def send_user_vacations(requester_user_id, interesting_user_id):
-    user = get_user(interesting_user_id)
+def send_user_vacations(workspace_id, requester_user_id, interesting_user_id):
+    user = get_user(workspace_id, interesting_user_id)
     username = user["name"]
-    user_vacations = get_user_vacations_from_db(interesting_user_id)
+    user_vacations = VACATIONS_DB_TABLE.get_vacations(interesting_user_id)
     if not user_vacations:
         text = f"{username} doesn't have booked vacations :thinking_face:"
     else:
@@ -165,22 +179,25 @@ def send_user_vacations(requester_user_id, interesting_user_id):
         for year, days in working_days_by_year_dict.items():
             text += f"\t*{days}* days in *{year}* year\n"
 
-    send_message(text, channel=requester_user_id)
+    send_message(workspace_id, text, channel=requester_user_id)
 
 
 @logger.inject_lambda_context(log_event=True)
 @uncaught_exceptions_handler
-def process_interactivities(event, _):
+def process_interactivity(event, _):
     request_body_json = parse.parse_qs(event["body"])
     payload = json.loads(request_body_json["payload"][0])
     logger.info({"payload": payload})
+    workspace_id = payload["team"]["id"]
+    VACATIONS_DB_TABLE.workspace_id = workspace_id
 
     if interactivity_name := payload.get("callback_id"):
-        get_modal_view_body_function = INTERACTIVITIES_GET_FUNCTIONS_MAPPING[interactivity_name]
-        modal_view_body = get_modal_view_body_function()
-        open_modal_view(payload["trigger_id"], modal_view_body)
+        get_modal_view_body_function = INTERACTIVITY_GET_FUNCTIONS_MAPPING[interactivity_name]
+        modal_view_body = get_modal_view_body_function(VACATIONS_DB_TABLE)
+        open_modal_view(workspace_id, payload["trigger_id"], modal_view_body)
 
     elif payload_type := payload.get("type"):
-        PAYLOAD_PROCESSING_FUNCTIONS_MAPPING.get(payload_type, lambda *args: None)(payload)
+        payload_processor = PAYLOAD_PROCESSING_FUNCTIONS_MAPPING.get(payload_type, lambda *args: None)
+        payload_processor(payload)
 
     return {"statusCode": HTTPStatus.OK}

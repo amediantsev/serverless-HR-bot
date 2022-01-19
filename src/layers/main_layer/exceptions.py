@@ -4,3 +4,7 @@ class ValidationError(Exception):
 
 class ArgumentsError(Exception):
     pass
+
+
+class NotSpecifiedWorkspaceError(Exception):
+    pass

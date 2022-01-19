@@ -6,18 +6,22 @@ from slack_sdk import WebClient
 from slack_sdk.models.views import View
 from slack_sdk.errors import SlackApiError
 
-from aws.dynamodb import get_notifications_channel_from_db, get_decision_maker_from_db
+from aws.dynamodb import VacationsTable
 from slack.messages import generate_block_with_text
 
+
+VACATIONS_DB_TABLE = VacationsTable()
 
 SERVICE_NAME = os.getenv("SERVICE_NAME")
 logger = Logger(service=SERVICE_NAME)
 
-slack_client = WebClient(token=os.environ["BOT_TOKEN"])
+slack_client = WebClient()
 
 
-def open_modal_view(trigger_id, modal_view_body):
+def open_modal_view(workspace_id, trigger_id, modal_view_body):
     try:
+        VACATIONS_DB_TABLE.workspace_id = workspace_id
+        slack_client.token = VACATIONS_DB_TABLE.get_workspace(workspace_id)["access_token"]
         response = slack_client.views_open(trigger_id=trigger_id, view=modal_view_body)
     except SlackApiError:
         logger.exception("Failed to open view.")
@@ -26,7 +30,7 @@ def open_modal_view(trigger_id, modal_view_body):
         logger.info(response.data)
 
 
-def get_book_vacation_modal_view():
+def get_book_vacation_modal_view(*args, **kwargs):
     today_string = str(datetime.date.today())
     return View(
         type="modal",
@@ -48,7 +52,7 @@ def get_book_vacation_modal_view():
     )
 
 
-def get_see_user_vacations_modal_view():
+def get_see_user_vacations_modal_view(*args, **kwargs):
     return View(
         type="modal",
         callback_id="see_user_vacations",
@@ -70,7 +74,7 @@ def get_see_user_vacations_modal_view():
     )
 
 
-def get_configure_workspace_modal_view():
+def get_configure_workspace_modal_view(table_object: VacationsTable):
     decision_maker_selector_block = {
         "type": "section",
         "block_id": "vacations_decision_maker_selector",
@@ -87,7 +91,7 @@ def get_configure_workspace_modal_view():
             }
         }
     }
-    if decision_maker := get_decision_maker_from_db():
+    if decision_maker := table_object.get_decision_maker():
         decision_maker_selector_block["accessory"]["initial_user"] = decision_maker["user_id"]
 
     notifications_channel_selector_block = {
@@ -106,7 +110,7 @@ def get_configure_workspace_modal_view():
             }
         }
     }
-    if notifications_channel := get_notifications_channel_from_db():
+    if notifications_channel := table_object.get_notifications_channel():
         notifications_channel_selector_block["accessory"]["initial_channel"] = notifications_channel["channel_id"]
 
     return View(

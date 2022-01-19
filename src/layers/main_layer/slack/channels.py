@@ -1,14 +1,13 @@
-import os
-from aws_lambda_powertools import Logger
-
 from slack_sdk import WebClient
 
-
-SERVICE_NAME = os.getenv("SERVICE_NAME")
-logger = Logger(service=SERVICE_NAME)
-
-slack_client = WebClient(token=os.environ["BOT_TOKEN"])
+from aws.dynamodb import VacationsTable
 
 
-def get_channel_members(channel_id):
+VACATIONS_DB_TABLE = VacationsTable()
+
+slack_client = WebClient()
+
+
+def get_channel_members(workspace_id, channel_id):
+    slack_client.token = VACATIONS_DB_TABLE.get_workspace(workspace_id)["access_token"]
     return slack_client.conversations_members(channel=channel_id).data["members"]

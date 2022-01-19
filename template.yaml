@@ -1,16 +1,16 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
     Runtime: python3.8
+    Timeout: 6
     Environment:
       Variables:
         SERVICE_NAME: HR-slack-bot
-        BOT_TOKEN: xoxb-2249465180118-2256239344626-jUdQ2nT5CZJzef5dG8jknBwo
-        BOT_HEALTH_CHANNEL_ID: C0288204SRW
-        USER_VACATION_TABLE_NAME:
+        ROOT_WORKSPACE_ID_SSM_PARAM: "/hr-slack-bot/workspace-id"
+        ROOT_BOT_HEALTH_CHANNEL_ID_SSM_PARAM: "/hr-slack-bot/health-channel-id"
+        USER_VACATIONS_TABLE_NAME:
           Ref: UserVacationsTable
 
 Resources:
@@ -31,27 +31,34 @@ Resources:
   ProcessInteractivity:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/handlers/process_interactivities
-      Handler: index.process_interactivities
+      Timeout: 10
+      CodeUri: src/handlers/process_interactivity
+      Handler: index.process_interactivity
       Layers:
         - !Ref MainLayer
       Events:
-        EventSubscriptionRequest:
+        InteractivityAction:
           Type: Api
           Properties:
-            Path: /process_interactivities
+            Path: /process_interactivity
             Method: post
       Policies:
         - Statement:
-            - Sid: DynamodbPolicy
-              Effect: Allow
-              Action:
-                - "dynamodb:GetItem"
-                - "dynamodb:PutItem"
-                - "dynamodb:Query"
-                - "dynamodb:UpdateItem"
-                - "dynamodb:DescribeTable"
-              Resource: !GetAtt UserVacationsTable.Arn
+          - Sid: DynamodbPolicy
+            Effect: Allow
+            Action:
+              - "dynamodb:GetItem"
+              - "dynamodb:PutItem"
+              - "dynamodb:Query"
+              - "dynamodb:UpdateItem"
+              - "dynamodb:DescribeTable"
+            Resource: !GetAtt UserVacationsTable.Arn
+          - Sid: SsmPolicy
+            Effect: Allow
+            Action:
+              - "ssm:GetParameter"
+            Resource: "*"
+
   ProcessVacationsStream:
     Type: AWS::Serverless::Function
     Properties:
@@ -67,13 +74,49 @@ Resources:
             Stream: !GetAtt UserVacationsTable.StreamArn
       Policies:
         - Statement:
-            - Sid: DynamodbPolicy
-              Effect: Allow
-              Action:
-                - "dynamodb:GetItem"
-                - "dynamodb:DeleteItem"
-                - "dynamodb:UpdateItem"
-              Resource: !GetAtt UserVacationsTable.Arn
+          - Sid: DynamodbPolicy
+            Effect: Allow
+            Action:
+              - "dynamodb:GetItem"
+              - "dynamodb:DeleteItem"
+              - "dynamodb:UpdateItem"
+            Resource: !GetAtt UserVacationsTable.Arn
+          - Sid: SsmPolicy
+            Effect: Allow
+            Action:
+              - "ssm:GetParameter"
+            Resource: "*"
+
+  RegisterNewWorkspace:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 12
+      CodeUri: src/handlers/register_new_workspace
+      Handler: index.register_new_workspace
+      Environment:
+        Variables:
+          CLIENT_ID_SSM_PARAM: "/hr-slack-bot/client-id"
+          CLIENT_SECRET_SSM_PARAM: "/hr-slack-bot/client-secret"
+      Layers:
+        - !Ref MainLayer
+      Events:
+        WorkspaceRegistration:
+          Type: Api
+          Properties:
+            Path: /register_new_workspace
+            Method: get
+      Policies:
+        - Statement:
+          - Sid: DynamodbPolicy
+            Effect: Allow
+            Action:
+              - "dynamodb:PutItem"
+            Resource: !GetAtt UserVacationsTable.Arn
+          - Sid: SsmPolicy
+            Effect: Allow
+            Action:
+              - "ssm:GetParameter"
+            Resource: "*"
 
 # DynamoDB
   UserVacationsTable:
